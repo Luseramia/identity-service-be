@@ -1,0 +1,60 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: bun-sso
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: bun-sso-identity
+  namespace: bun-sso
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: identity
+  namespace: bun-sso
+  labels: { monitoring: bun-sso }
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app: identity }
+  template:
+    metadata:
+      labels: { app: identity }
+      annotations:
+        vault.hashicorp.com/agent-inject: "true"
+        vault.hashicorp.com/agent-inject-token: "true"
+        vault.hashicorp.com/role: bun-sso-identity
+    spec:
+      serviceAccountName: bun-sso-identity
+      containers:
+        - name: identity
+          image: ghcr.io/example/bun-sso-identity:latest
+          ports:
+            - { name: http, containerPort: 3001 }
+          envFrom:
+            - secretRef: { name: identity-runtime }
+          env:
+            - { name: IDENTITY_PORT, value: "3001" }
+            - { name: VAULT_TOKEN_FILE, value: /vault/secrets/token }
+          readinessProbe:
+            httpGet: { path: /health/ready, port: http }
+          livenessProbe:
+            httpGet: { path: /health/live, port: http }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities: { drop: ["ALL"] }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: identity
+  namespace: bun-sso
+  labels: { monitoring: bun-sso }
+spec:
+  selector: { app: identity }
+  ports:
+    - { name: http, port: 3001, targetPort: http }

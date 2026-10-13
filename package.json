@@ -1,0 +1,30 @@
+{
+  "name": "@bun-sso/identity-service",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun --hot src/index.ts",
+    "start": "bun src/index.ts",
+    "typecheck": "bun node_modules/typescript/bin/tsc -p tsconfig.json --noEmit",
+    "test": "bun test src",
+    "migrate": "bun scripts/migrate-identity.ts",
+    "seed:clients": "bun scripts/seed-oauth-clients.ts",
+    "user:create": "bun scripts/create-identity-user.ts",
+    "access:revoke": "bun scripts/revoke-identity-access.ts",
+    "verify:db": "bun scripts/verify-identity-db.ts",
+    "configure:vault": "bun scripts/configure-identity-vault.ts",
+    "verify:vault": "bun scripts/verify-identity-vault.ts",
+    "audit:vault": "bun scripts/audit-identity-vault.ts"
+  },
+  "dependencies": {
+    "@elysiajs/cors": "^1.4.0",
+    "@noble/curves": "^2.0.1",
+    "elysia": "^1.4.16",
+    "ioredis": "^5.8.2"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5"
+  }
+}

@@ -1,4 +1,4 @@
-import { vaultConfig } from "./runtime-config";
+import { httpConfig, vaultConfig } from "./runtime-config";
 
 export interface IdentityConfig {
   issuer: string;
@@ -10,6 +10,8 @@ export interface IdentityConfig {
   refreshTokenTtlSeconds: number;
   browserSessionTtlSeconds: number;
   authenticationChallengeTtlSeconds: number;
+  loginApprovalTtlSeconds?: number;
+  corsAllowedOrigins?: string[];
   vault: {
     address: string;
     transitMount: string;
@@ -52,6 +54,8 @@ export function loadIdentityConfig(): IdentityConfig {
     deviceCodeTtlSeconds: integer("SSO_DEVICE_CODE_TTL_SECONDS", 600),
     refreshTokenTtlSeconds: integer("SSO_REFRESH_TOKEN_TTL_SECONDS", 2_592_000),
     browserSessionTtlSeconds: integer("SSO_BROWSER_SESSION_TTL_SECONDS", 28_800),
+    loginApprovalTtlSeconds: integer("SSO_LOGIN_APPROVAL_TTL_SECONDS", 600),
+    corsAllowedOrigins: httpConfig().corsAllowedOrigins,
     authenticationChallengeTtlSeconds: integer(
       "SSO_AUTH_CHALLENGE_TTL_SECONDS",
       300,

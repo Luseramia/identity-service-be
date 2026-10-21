@@ -14,6 +14,8 @@ import {
 import type { IdentityTransientStore } from "./store/transient-store";
 import { verifyIssuedAccessToken } from "./jwt/access-token-verifier";
 import { IdentityMetrics, InstrumentedJwtSigner } from "./metrics";
+import { ApprovalService, validUuid } from "./services/approval-service";
+import { ApprovalConflictError } from "./repository/identity-repository";
 
 export interface IdentityAppDependencies {
   config: IdentityConfig;
@@ -26,7 +28,7 @@ export interface IdentityAppDependencies {
 type Body = Record<string, unknown>;
 
 const stringValue = (body: Body, key: string) =>
-  typeof body[key] === "string" ? body[key] : undefined;
+  typeof body?.[key] === "string" ? body[key] : undefined;
 
 const bearer = (authorization?: string) =>
   authorization?.startsWith("Bearer ")
@@ -127,6 +129,11 @@ export function createIdentityApp({
   });
   const secureCookie = config.issuer.startsWith("https://");
   const cookieName = secureCookie ? "__Host-sso_session" : "sso_session";
+  const approvals = new ApprovalService(repository, oauth, {
+    ttlSeconds: config.loginApprovalTtlSeconds ?? 600, sessionTtlSeconds: config.browserSessionTtlSeconds,
+  });
+  const resolveSession = (request: Request) => sessions.resolve(sessionCookie(request.headers.get("cookie"), cookieName));
+  const trustedOrigins = new Set([new URL(config.issuer).origin, ...(config.corsAllowedOrigins ?? [])]);
 
   const metadata = {
     issuer: config.issuer,
@@ -161,6 +168,16 @@ export function createIdentityApp({
   };
 
   return new Elysia({ name: "identity" })
+    .onBeforeHandle(({ request }) => {
+      if (!["POST", "DELETE"].includes(request.method)) return;
+      const origin = request.headers.get("origin");
+      if ((origin && !trustedOrigins.has(origin)) || (!origin && request.headers.get("sec-fetch-site") === "cross-site")) {
+        throw new OAuthError("access_denied", "Request origin is not trusted", 403);
+      }
+      if (new URL(request.url).pathname.startsWith("/admin/") && !request.headers.get("content-type")?.startsWith("application/json")) {
+        throw new OAuthError("invalid_request", "Administrative changes require JSON", 415);
+      }
+    })
     .onAfterHandle(({ set }) => {
       set.headers["x-content-type-options"] = "nosniff";
       set.headers["referrer-policy"] = "no-referrer";
@@ -168,6 +185,10 @@ export function createIdentityApp({
     })
     .onError(({ error, set }) => {
       set.headers["cache-control"] = "no-store";
+      if (error instanceof ApprovalConflictError) {
+        set.status = 409;
+        return { error: "approval_conflict", error_description: error.message };
+      }
       if (error instanceof OAuthError) {
         metrics.oauthError(error.error);
         set.status = error.status;
@@ -186,7 +207,7 @@ export function createIdentityApp({
       set.status = 500;
       return { error: "server_error" };
     })
-    .onAfterHandle(({ request, set }) => {
+    .onAfterHandle(({ request, set, response }) => {
       const status = Number(set.status ?? 200);
       if (status >= 400) return;
       const path = new URL(request.url).pathname;
@@ -194,6 +215,11 @@ export function createIdentityApp({
         metrics.loginSuccesses += 1;
       }
       if (request.method === "POST" && path === "/oauth/token") {
+        metrics.tokenResponses += 1;
+      }
+      if (path.startsWith("/auth/") || path.startsWith("/admin/")) set.headers["cache-control"] = "no-store";
+      if (request.method === "POST" && /^\/auth\/approvals\/[^/]+\/poll$/.test(path) && response && typeof response === "object" && "access_token" in response) {
+        metrics.loginSuccesses += 1;
         metrics.tokenResponses += 1;
       }
     })
@@ -220,6 +246,69 @@ export function createIdentityApp({
     .get("/metrics", ({ set }) => {
       set.headers["content-type"] = "text/plain; version=0.0.4; charset=utf-8";
       return metrics.render();
+    })
+    .get("/auth/clients", async () => (await repository.listClients())
+      .filter((client) => client.type === "public")
+      .map(({ id, name, allowedScopes, allowedResources }) => ({ id, name, allowedScopes, allowedResources })))
+    .get("/auth/session", async ({ request, set }) => {
+      set.headers["cache-control"] = "no-store";
+      const session = await resolveSession(request);
+      if (!session) return { authenticated: false };
+      return { authenticated: true, user: session.user, expires_at: session.expiresAt,
+        approver: await repository.isApprover(session.user.id), approval_id: session.approvalId };
+    })
+    .post("/auth/approvals/start", ({ body, request, set }) => {
+      set.headers["cache-control"] = "no-store";
+      const b = body as Body;
+      const credentials = clientCredentials(request.headers, b);
+      return approvals.start({ displayName: stringValue(b, "display_name") ?? "", credentialId: stringValue(b, "credential_id") ?? "",
+        publicKey: stringValue(b, "public_key") ?? "", clientId: credentials.clientId, clientSecret: credentials.clientSecret,
+        scopes: stringValue(b, "scope") ?? "openid", resource: stringValue(b, "resource") ?? "" });
+    })
+    .post("/auth/approvals/:id/prove", ({ params, body, set }) => {
+      set.headers["cache-control"] = "no-store";
+      return approvals.prove(params.id, stringValue(body as Body, "signature") ?? "");
+    })
+    .post("/auth/approvals/:id/poll", async ({ params, body, set }) => {
+      set.headers["cache-control"] = "no-store";
+      const result = await approvals.poll(params.id, stringValue(body as Body, "signature") ?? "");
+      if (!("session" in result)) return result;
+      const { session, ...tokens } = result;
+      set.headers["set-cookie"] = [ `${cookieName}=${encodeURIComponent(session.token)}`, "Path=/", "HttpOnly", "SameSite=Lax",
+        `Max-Age=${Math.max(0, Math.floor((session.expiresAt.getTime() - Date.now()) / 1000))}`, ...(secureCookie ? ["Secure"] : []) ].join("; ");
+      return { ...tokens, expires_at: session.expiresAt };
+    })
+    .get("/admin/overview", async ({ request, set }) => {
+      await approvals.requireApprover(await resolveSession(request));
+      set.headers["cache-control"] = "no-store";
+      const [pending, users, clients, grants] = await Promise.all([
+        repository.listPendingApprovals(new Date()), repository.listUsers(), repository.listClients(), repository.listAccessGrants(),
+      ]);
+      return { requests: pending.map((r) => approvals.describe(r)), users,
+        clients: clients.map(({ id, name, type, allowedScopes, allowedResources }) => ({ id, name, type, allowedScopes, allowedResources })), grants };
+    })
+    .post("/admin/approvals/:id/approve", async ({ request, params, body }) => {
+      const actor = await approvals.requireApprover(await resolveSession(request));
+      const b = body as Body;
+      return approvals.decide(params.id, actor, "approved", b?.scopes, stringValue(b, "target_user_id"));
+    })
+    .post("/admin/approvals/:id/reject", async ({ request, params }) => {
+      const actor = await approvals.requireApprover(await resolveSession(request));
+      return approvals.decide(params.id, actor, "rejected", []);
+    })
+    .post("/admin/access-grants", async ({ request, body }) => {
+      const actor = await approvals.requireApprover(await resolveSession(request));
+      const b = body as Body;
+      return approvals.setGrant({ userId: stringValue(b, "user_id") ?? "", clientId: stringValue(b, "client_id") ?? "",
+        resource: stringValue(b, "resource") ?? "", scopes: b?.scopes as string[] }, actor);
+    })
+    .post("/admin/access-grants/revoke", async ({ request, body }) => {
+      const actor = await approvals.requireApprover(await resolveSession(request));
+      const b = body as Body;
+      const userId = stringValue(b, "user_id") ?? "";
+      if (!validUuid(userId)) throw new OAuthError("invalid_request", "Invalid user ID");
+      await repository.revokeAccessGrant(userId, stringValue(b, "client_id") ?? "", stringValue(b, "resource") ?? "", actor);
+      return { success: true };
     })
     .post("/auth/enrollments/start", async ({ body }) =>
       enrollments.start({

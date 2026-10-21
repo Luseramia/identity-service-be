@@ -5,6 +5,13 @@ const list = (name: string, fallback: string) =>
 
 const clients = [
   {
+    id: process.env.WEBAPP_OAUTH_CLIENT_ID ?? "x-webapp",
+    name: "X Webapp",
+    redirects: list("WEBAPP_OAUTH_REDIRECT_URIS", "http://localhost:5173/oauth/callback"),
+    scopes: ["openid", "profile", "finance:read", "finance:write", "documents:read", "documents:write", "market:read", "market:write"],
+    resources: [process.env.BUSINESS_API_AUDIENCE ?? "urn:bun-sso:business-api"],
+  },
+  {
     id: process.env.FINANCE_OAUTH_CLIENT_ID ?? "finance-web",
     name: "Finance Web",
     redirects: list("FINANCE_OAUTH_REDIRECT_URIS", "http://127.0.0.1:5173/oauth/callback"),

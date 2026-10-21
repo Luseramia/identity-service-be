@@ -73,7 +73,7 @@ export class RedisIdentityTransientStore implements IdentityTransientStore {
   async decideDeviceGrant(
     userCode: string,
     decision: "approved" | "denied",
-    user: { id: string; authenticationMethod: string; authenticationTime: number },
+    user: { id: string; authenticationMethod: string; authenticationTime: number; approvalId?: string },
   ) {
     const normalized = normalizeUserCode(userCode);
     const mappingKey = this.key(`user-code:${normalized}`);
@@ -90,6 +90,7 @@ export class RedisIdentityTransientStore implements IdentityTransientStore {
     record.userId = user.id;
     record.authenticationMethod = user.authenticationMethod;
     record.authenticationTime = user.authenticationTime;
+    record.approvalId = user.approvalId;
     await this.redis.set(txKey, JSON.stringify(record), "KEEPTTL");
     return true;
   }

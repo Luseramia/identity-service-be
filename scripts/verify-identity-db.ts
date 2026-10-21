@@ -6,14 +6,21 @@ try {
     WHERE table_schema = 'public' AND table_name IN (
       'identity_users', 'identity_credentials', 'identity_enrollment_tokens',
       'identity_browser_sessions', 'identity_audit_events', 'oauth_clients',
-      'oauth_redirect_uris', 'oauth_refresh_sessions'
+      'oauth_redirect_uris', 'oauth_refresh_sessions',
+      'identity_user_roles', 'identity_access_grants', 'identity_login_approvals'
     )`;
-  if (tables.length !== 8) throw new Error(`Expected 8 identity tables, found ${tables.length}`);
+  if (tables.length !== 11) throw new Error(`Expected 11 identity tables, found ${tables.length}`);
 
+  const expectedClientIds = [...new Set([
+    process.env.WEBAPP_OAUTH_CLIENT_ID ?? "x-webapp",
+    process.env.FINANCE_OAUTH_CLIENT_ID ?? "finance-web",
+    process.env.DOCUMENTS_OAUTH_CLIENT_ID ?? "documents-web",
+    process.env.MARKET_OAUTH_CLIENT_ID ?? "market-client",
+  ])];
   const clients = await pool`
     SELECT id, status FROM oauth_clients
-    WHERE id IN ('finance-web', 'documents-web', 'market-client')`;
-  if (clients.length !== 3 || clients.some((row: { status: string }) => row.status !== "ACTIVE")) {
+    WHERE id = ANY(string_to_array(${expectedClientIds.join("\n")}, E'\n'))`;
+  if (clients.length !== expectedClientIds.length || clients.some((row: { status: string }) => row.status !== "ACTIVE")) {
     throw new Error("Expected OAuth clients are missing or inactive");
   }
   const leftovers = await pool`

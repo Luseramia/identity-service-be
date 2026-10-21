@@ -26,7 +26,7 @@ export function verifyPkce(verifier: string, expectedChallenge: string) {
 }
 
 export function deviceApprovalMessage(input: {
-  purpose: "login" | "enrollment";
+  purpose: "login" | "enrollment" | "login_approval";
   transactionId: string;
   challenge: string;
 }) {

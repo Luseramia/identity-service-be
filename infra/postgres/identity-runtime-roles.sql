@@ -11,5 +11,6 @@ GRANT USAGE ON SCHEMA public TO bun_sso_identity;
 GRANT SELECT, INSERT, UPDATE, DELETE ON
   identity_users, identity_credentials, identity_enrollment_tokens,
   identity_browser_sessions, identity_audit_events, oauth_clients,
-  oauth_redirect_uris, oauth_refresh_sessions
+  oauth_redirect_uris, oauth_refresh_sessions, identity_user_roles,
+  identity_access_grants, identity_login_approvals
 TO bun_sso_identity;

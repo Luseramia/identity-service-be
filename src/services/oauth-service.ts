@@ -4,6 +4,7 @@ import type {
   BrowserSession,
   IdentityRepository,
   OAuthClient,
+  RefreshSessionInput,
 } from "../repository/identity-repository";
 import {
   createUserCode,
@@ -82,6 +83,7 @@ export class OAuthService {
       input.scopes,
       input.resource,
     );
+    await this.requireUserGrant(session.user.id, client, scopes, resource, session.approvalId);
 
     const code = randomOpaqueToken();
     await this.store.putAuthorizationCode(
@@ -90,6 +92,7 @@ export class OAuthService {
         clientId: client.id,
         redirectUri: input.redirectUri,
         userId: session.user.id,
+        approvalId: session.approvalId,
         scopes,
         resource,
         codeChallenge: input.codeChallenge,
@@ -133,6 +136,7 @@ export class OAuthService {
     }
     return this.issueTokens({
       userId: grant.userId,
+      approvalId: grant.approvalId,
       client,
       scopes: grant.scopes,
       resource: grant.resource,
@@ -170,6 +174,12 @@ export class OAuthService {
     }
     if (result.status !== "rotated") {
       throw new OAuthError("invalid_grant", "Refresh token is invalid or expired");
+    }
+    try {
+      await this.requireUserGrant(result.userId, client, result.scopes, result.resource, result.approvalId);
+    } catch (error) {
+      await this.repository.revokeRefreshSession(hashToken(replacement), client.id);
+      throw error;
     }
     const access = await this.accessTokens.issue({
       subject: result.userId,
@@ -251,10 +261,17 @@ export class OAuthService {
     decision: "approved" | "denied",
     session: BrowserSession,
   ) {
+    const record = await this.store.findDeviceGrantByUserCode(userCode);
+    if (!record) throw new OAuthError("invalid_request", "Device request not found", 404);
+    if (decision === "approved") {
+      const client = await this.requireClient(record.clientId);
+      await this.requireUserGrant(session.user.id, client, record.scopes, record.resource, session.approvalId);
+    }
     const updated = await this.store.decideDeviceGrant(userCode, decision, {
       id: session.user.id,
       authenticationMethod: session.authenticationMethod,
       authenticationTime: Math.floor(session.authenticatedAt.getTime() / 1000),
+      approvalId: session.approvalId,
     });
     if (!updated) {
       throw new OAuthError("invalid_request", "Device request is invalid or expired", 404);
@@ -298,6 +315,7 @@ export class OAuthService {
     try {
       const tokens = await this.issueTokens({
         userId: record.userId,
+        approvalId: record.approvalId,
         client,
         scopes: record.scopes,
         resource: record.resource,
@@ -312,7 +330,7 @@ export class OAuthService {
     }
   }
 
-  private async issueTokens(input: {
+  async prepareTokens(input: {
     userId: string;
     client: OAuthClient;
     scopes: string[];
@@ -320,7 +338,9 @@ export class OAuthService {
     nonce?: string;
     authenticationMethod: string;
     authenticationTime: number;
-  }) {
+    approvalId?: string;
+  }, allowApproved = false) {
+    await this.requireUserGrant(input.userId, input.client, input.scopes, input.resource, input.approvalId, allowApproved);
     const access = await this.accessTokens.issue({
       subject: input.userId,
       audience: input.resource,
@@ -330,16 +350,17 @@ export class OAuthService {
       authenticationTime: input.authenticationTime,
     });
     const refreshToken = randomOpaqueToken();
-    await this.repository.createRefreshSession({
+    const refresh: RefreshSessionInput = {
       tokenHash: hashToken(refreshToken),
       userId: input.userId,
       clientId: input.client.id,
       scopes: input.scopes,
       resource: input.resource,
+      approvalId: input.approvalId,
       expiresAt: new Date(
         (this.now() + this.options.refreshTokenTtlSeconds) * 1000,
       ),
-    });
+    };
     const idToken = input.scopes.includes("openid")
       ? await this.idTokens.issue({
           subject: input.userId,
@@ -349,14 +370,45 @@ export class OAuthService {
           authenticationMethods: [input.authenticationMethod],
         })
       : undefined;
-    return {
+    return { refresh, tokens: {
       access_token: access.accessToken,
       token_type: access.tokenType,
       expires_in: access.expiresIn,
       refresh_token: refreshToken,
       scope: input.scopes.join(" "),
       ...(idToken ? { id_token: idToken } : {}),
-    };
+    } };
+  }
+
+  private async issueTokens(input: Parameters<OAuthService["prepareTokens"]>[0]) {
+    const prepared = await this.prepareTokens(input);
+    await this.repository.createRefreshSession(prepared.refresh);
+    return prepared.tokens;
+  }
+
+  async approvalClient(clientId: string, scopes: string, resource: string, credentials?: { clientSecret?: string }) {
+    const client = credentials
+      ? await this.authenticateClient({ clientId, clientSecret: credentials.clientSecret })
+      : await this.requireClient(clientId);
+    return { client, ...this.validateGrant(client, scopes, resource) };
+  }
+
+  private async requireUserGrant(userId: string, client: OAuthClient, scopes: string[], resource: string, approvalId?: string, allowApproved = false) {
+    this.validateGrant(client, scopes.join(" "), resource);
+    const user = await this.repository.findUser(userId);
+    if (!user || user.status !== "ACTIVE") throw new OAuthError("access_denied", "User is inactive", 403);
+    const grant = await this.repository.findAccessGrant(userId, client.id, resource);
+    if (!grant || scopes.some((s) => !grant.scopes.includes(s))) throw new OAuthError("access_denied", "User has not been granted the requested permissions", 403);
+    const approval = approvalId ? await this.repository.findLoginApproval(approvalId) : null;
+    if (!approval || approval.userId !== userId || approval.clientId !== client.id || approval.resource !== resource ||
+        !(approval.status === "consumed" || (allowApproved && approval.status === "approved" && approval.expiresAt.getTime() > this.now() * 1000)) ||
+        scopes.some((s) => !approval.approvedScopes.includes(s))) {
+      throw new OAuthError("approval_required", "An administrator must approve this login and its requested permissions", 403);
+    }
+    const credential = await this.repository.findCredential(approval.credentialId);
+    if (!credential || credential.status !== "ACTIVE" || credential.userStatus !== "ACTIVE" || credential.userId !== userId) {
+      throw new OAuthError("access_denied", "Approved credential is inactive", 403);
+    }
   }
 
   private async requireClient(clientId?: string) {

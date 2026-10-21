@@ -19,6 +19,7 @@ export interface EnrollmentChallengeRecord {
 }
 
 export interface AuthorizationCodeRecord {
+  approvalId?: string;
   clientId: string;
   redirectUri: string;
   userId: string;
@@ -32,6 +33,7 @@ export interface AuthorizationCodeRecord {
 }
 
 export interface DeviceGrantRecord {
+  approvalId?: string;
   id: string;
   deviceCodeHash: string;
   userCode: string;
@@ -72,7 +74,7 @@ export interface IdentityTransientStore {
   decideDeviceGrant(
     userCode: string,
     decision: "approved" | "denied",
-    user: { id: string; authenticationMethod: string; authenticationTime: number },
+    user: { id: string; authenticationMethod: string; authenticationTime: number; approvalId?: string },
   ): Promise<boolean>;
   pollDeviceGrant(
     deviceCodeHash: string,

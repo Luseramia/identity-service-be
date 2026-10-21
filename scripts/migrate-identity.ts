@@ -7,13 +7,16 @@ const expectedTables = [
   "identity_credentials",
   "identity_enrollment_tokens",
   "identity_users",
+  "identity_user_roles",
+  "identity_access_grants",
+  "identity_login_approvals",
   "oauth_clients",
   "oauth_redirect_uris",
   "oauth_refresh_sessions",
 ];
 
 try {
-  const migrationsDirectory = new URL("../migrations/identity/", import.meta.url);
+  const migrationsDirectory = new URL("../migrations/", import.meta.url);
   const migrationsPath = fileURLToPath(migrationsDirectory);
   const migrations: string[] = [];
   const glob = new Bun.Glob("*.sql");
@@ -45,6 +48,9 @@ try {
       'identity_credentials',
       'identity_enrollment_tokens',
       'identity_users',
+      'identity_user_roles',
+      'identity_access_grants',
+      'identity_login_approvals',
       'oauth_clients',
       'oauth_redirect_uris',
       'oauth_refresh_sessions'

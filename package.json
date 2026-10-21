@@ -11,6 +11,7 @@
     "migrate": "bun scripts/migrate-identity.ts",
     "seed:clients": "bun scripts/seed-oauth-clients.ts",
     "user:create": "bun scripts/create-identity-user.ts",
+    "user:approver": "bun scripts/set-approver-role.ts",
     "access:revoke": "bun scripts/revoke-identity-access.ts",
     "verify:db": "bun scripts/verify-identity-db.ts",
     "configure:vault": "bun scripts/configure-identity-vault.ts",

@@ -61,6 +61,25 @@ Redis contains only one-time challenges, authorization codes, and device
 transactions. After a loss, clients restart the current authorization or
 enrollment transaction. Browser and refresh sessions remain in PostgreSQL.
 
+Administrator login approvals and access grants also remain in PostgreSQL. A
+proven pending request can continue after Redis recovery. Review the approval
+queue and `login.*` / `access.*` audit events when investigating access issues.
+
+## Approval and permissions issues
+
+- `approval_required`: use the request-login screen and obtain administrator
+  approval for the requested client, API, and scopes. Direct device sign-in
+  grants console administration only when the account has the approver role.
+- `access_denied`: check user/credential status and the user's access grant.
+- `subject_not_mapped` from Business API: map the identity UUID to the correct
+  legacy owner with Business API's `subject:map` command.
+- To recover administrator access, provision a trusted device with an enrollment
+  token and use `bun run user:approver grant <uuid>` through the operator account.
+- Changing grants revokes matching refresh sessions. Existing access tokens
+  expire normally; browser logout alone does not revoke an OAuth refresh family.
+
+See [login-approvals.md](login-approvals.md) for setup and API payloads.
+
 ## Clock and key rotation
 
 - Synchronize Vault, Identity, resource APIs, PostgreSQL, and Kubernetes nodes.

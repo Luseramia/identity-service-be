@@ -69,6 +69,15 @@ function oauthFixture() {
     displayName: "Test User",
     status: "ACTIVE",
   });
+  const approvalId = "019d2f29-b80a-7c21-b73a-415687c7d786";
+  repository.credentials.set("approved-device", { id: "credential-1", credentialId: "approved-device", userId: USER_ID,
+    publicKey: "test-public-key", algorithm: "ES256", status: "ACTIVE", userStatus: "ACTIVE" });
+  repository.approvals.set(approvalId, { id: approvalId, displayName: "Test User", credentialId: "approved-device",
+    publicKey: "test-public-key", algorithm: "ES256", message: "proof", clientId: client.id, resource: AUDIENCE,
+    requestedScopes: client.allowedScopes, approvedScopes: client.allowedScopes, userId: USER_ID, status: "consumed",
+    createdAt: new Date(NOW * 1000), expiresAt: new Date((NOW + 600) * 1000) });
+  repository.grants.set(JSON.stringify([USER_ID, client.id, AUDIENCE]), { userId: USER_ID, clientId: client.id,
+    resource: AUDIENCE, scopes: client.allowedScopes });
   const access = new AccessTokenIssuer(signer, {
     issuer: ISSUER,
     defaultTtlSeconds: 600,
@@ -87,6 +96,7 @@ function oauthFixture() {
     now: () => now,
   });
   const session = {
+    approvalId,
     id: "session-1",
     user: repository.users.get(USER_ID)!,
     authenticationMethod: "device_signature",

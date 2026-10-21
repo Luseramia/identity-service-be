@@ -57,7 +57,7 @@ export class MemoryIdentityTransientStore implements IdentityTransientStore {
   async decideDeviceGrant(
     userCode: string,
     decision: "approved" | "denied",
-    user: { id: string; authenticationMethod: string; authenticationTime: number },
+    user: { id: string; authenticationMethod: string; authenticationTime: number; approvalId?: string },
   ) {
     const record = await this.findDeviceGrantByUserCode(userCode);
     if (!record || record.status !== "pending") return false;
@@ -65,6 +65,7 @@ export class MemoryIdentityTransientStore implements IdentityTransientStore {
     record.userId = user.id;
     record.authenticationMethod = user.authenticationMethod;
     record.authenticationTime = user.authenticationTime;
+    record.approvalId = user.approvalId;
     return true;
   }
 
